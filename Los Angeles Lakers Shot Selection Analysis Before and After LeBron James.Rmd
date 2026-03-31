@@ -1,0 +1,378 @@
+---
+title: "Los Angeles Lakers Shot Selection Analysis Before and After Lebron James"
+author: "Drew Tomashek"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+
+# =======================
+# Load Required Libraries
+# =======================
+
+library(hoopR)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(purrr)
+
+
+# ===================
+# Seasons of Interest
+# ===================
+
+# Selected 12 seasons to compare 6 years before and after Lebron James joined the Lakers
+
+seasons <- c(
+"2013-14","2014-15","2015-16","2016-17",
+"2017-18","2018-19","2019-20","2020-21",
+"2021-22","2022-23","2023-24","2024-25"
+)
+
+
+# =================
+# Collect Shot Data
+# =================
+
+# Pulls shot chart data for each season and combines into one dataset
+# map_df is used to loop through each season and combine results into one dataframe, more efficient then writing a loop manually
+
+lakers_shots <- map_df(seasons, function(s){
+
+  shots <- hoopR::nba_shotchartdetail(
+    team_id = 1610612747,             # Lakers team ID
+    player_id = 0,                    # All Players
+    season = s,
+    season_type = "Regular Season",
+    context_measure_simple = "FGA"
+  )
+
+  df <- shots$Shot_Chart_Detail
+  df$season <- s
+
+  return(df)
+
+})
+
+
+# =============
+# Data Cleaning
+# =============
+
+# Convert coordinates to numeric for proper plotting
+
+lakers_shots <- lakers_shots %>%
+  mutate(
+    LOC_X = as.numeric(as.character(LOC_X)),
+    LOC_Y = as.numeric(as.character(LOC_Y)),
+    SHOT_DISTANCE = as.numeric(as.character(SHOT_DISTANCE))
+  )
+
+
+# ======================
+# Court Drawing Function
+# ======================
+
+# Custom function to overlay an NBA half-court using ggplot layers
+# Used a lot of help from outside sources to make sure dimensions and scaling were correct
+
+draw_court <- function(color = "black", fill = NA) {
+  list(
+    # Hoop
+    geom_point(aes(x = 0, y = 0), color = color, size = 3),
+
+    # Backboard
+    geom_segment(aes(x = -30, y = -7.5, xend = 30, yend = -7.5), color = color),
+
+    # Paint 
+    geom_rect(aes(xmin = -80, xmax = 80, ymin = -47.5, ymax = 143),
+              fill = fill, color = color),
+
+    # Free throw circle
+    # Top half only using trig functions
+    geom_path(data = data.frame(
+      x = 60 * cos(seq(0, pi, length.out = 100)),
+      y = 60 * sin(seq(0, pi, length.out = 100)) + 142.5
+    ), aes(x = x, y = y), color = color),
+
+    # Three point lines (corners)
+    geom_segment(aes(x = -220, y = -47.5, xend = -220, yend = 92.5), color = color),
+    geom_segment(aes(x = 220, y = -47.5, xend = 220, yend = 92.5), color = color),
+    
+    # Three point arc 
+    # Used trig for the arc and trimmed it to connect smoothly to the corner lines
+geom_path(
+  data = data.frame(
+    angle = seq(0, pi, length.out = 500)
+  ) %>%
+    mutate(
+      x = 237.5 * cos(angle),
+      y = 237.5 * sin(angle)
+    ) %>%
+    filter(y >= 92.5),   
+  aes(x = x, y = y),
+  color = color
+)
+  )
+}
+
+
+# =================================================
+# Single Season Plot(2019-2020) (Championship Year)
+# =================================================
+
+lakers_shots_2020 <- lakers_shots %>%
+  filter(season == "2019-20")
+
+plot_2020 <- ggplot(lakers_shots_2020, aes(x = LOC_X, y = LOC_Y)) +
+  draw_court() + 
+  
+  # Plot each shot with transparency to handle overplotting
+  # Alpha reduces clutter, size keeps points readable
+  
+  geom_point(aes(color = factor(SHOT_MADE_FLAG)),
+             alpha = 0.3,
+             size = 1) +
+  
+  # Fixed ratio so court is not distorted
+  
+  coord_fixed(xlim = c(-250,250), ylim = c(-50,420)) +
+  scale_color_manual(values = c("#552583", "#FDB927"),
+                     labels = c("Miss", "Make")) +
+  
+  # Lakers colors
+  
+  # Minimal themes and remove axes for a good style
+  
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title = element_blank(),
+    panel.grid = element_blank()
+  ) + 
+  labs(
+    title = "Los Angeles Lakers Shot Chart",
+    subtitle = "2019–20 Season",
+    color = "Shot Result"
+  )
+
+
+# =========================
+# Faceted Multi Season Plot
+# =========================
+
+facet_plot <- ggplot(lakers_shots, aes(x = LOC_X, y = LOC_Y)) +
+  draw_court() + 
+  geom_point(aes(color = factor(SHOT_MADE_FLAG)),
+             alpha = 0.3,
+             size = 1) +
+  coord_fixed(xlim = c(-250,250), ylim = c(-50,420)) +
+  scale_color_manual(values = c("#552583", "#FDB927"),
+                     labels = c("Miss", "Make")) +
+  
+  # Facet by season 
+  
+  facet_wrap(~ season) +
+  theme_minimal(base_size = 8) +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title = element_blank(),
+    panel.grid = element_blank()
+  ) + 
+  labs(
+    title = "Los Angeles Lakers Shot Charts by Season",
+    subtitle = "2013-2025",
+    color = "Shot Result"
+  )
+
+
+# =====================
+# Plot and save outputs 
+# =====================
+
+plot_2020
+facet_plot
+
+ggsave(
+  filename = "lakers_2020_shot_chart.png",
+  plot = plot_2020,
+  width = 8,
+  height = 7,
+  dpi = 300
+)
+
+ggsave(
+  filename = "lakers_faceted_shot_chart.png",
+  plot = facet_plot,
+  width = 18,
+  height = 14
+)
+
+```
+
+```{r, echo = FALSE, warning=FALSE, message=FALSE, results='hide'}
+
+# ====================================
+# Pre-Lebron vs Post-Lebron Statistics
+# ====================================
+
+# Convert era variable to compare before vs after Lebron
+
+lakers_shots <- lakers_shots %>%
+  mutate(
+    era = ifelse(season %in% c("2013-14","2014-15","2015-16","2016-17","2017-18","2018-19"), "Pre-LeBron", "Post-LeBron")
+  )
+
+# Shot result is numeric (0/1)
+lakers_shots$SHOT_MADE_FLAG <- as.numeric(as.character(lakers_shots$SHOT_MADE_FLAG))
+
+# Field goal percentage by era 
+lakers_shots %>%
+  group_by(era) %>%
+  summarise(
+    FG_Percentage = mean(SHOT_MADE_FLAG, na.rm = TRUE)
+  )
+
+# Average shot distance by era 
+lakers_shots %>%
+  group_by(era) %>%
+  summarise(
+    Avg_Distance = mean(SHOT_DISTANCE, na.rm = TRUE)
+  )
+
+# Creates shot zones based on distance
+lakers_shots <- lakers_shots %>%
+  mutate(
+    zone = case_when(
+      SHOT_DISTANCE < 8 ~ "Rim",
+      SHOT_DISTANCE < 16 ~ "Mid-Range",
+      TRUE ~ "3PT"
+    )
+  )
+
+# Shot distribution by zone
+lakers_shots %>%
+  group_by(era, zone) %>%
+  summarise(count = n()) %>%
+  group_by(era) %>%
+  mutate(percent = count / sum(count))
+
+# Three point rate
+lakers_shots %>%
+  mutate(is_three = SHOT_DISTANCE >= 23) %>%
+  group_by(era) %>%
+  summarise(
+    Three_Point_Rate = mean(is_three, na.rm = TRUE)
+  )
+
+```
+
+# Key Findings
+
+-   The Lakers became a more efficient offensive team in the Post-LeBron era\
+
+-   Shot selection shifted toward a modern, analytics driven style emphasizing three pointers and shots at the rim\
+
+-   Mid-range shooting declined as a share of total attempts\
+
+-   Overall offensive spacing increased, leading to longer average shot distances\
+
+-   Visual shot patterns confirm a transition toward a “rim-and-three” offensive structure
+
+# Detailed Analysis
+
+### Improved Offensive Efficiency
+
+The Lakers showed a clear improvement in shooting efficiency after the arrival of LeBron James. Field goal percentage increased from 44.7% in the Pre-LeBron era to 48.0% in the Post-LeBron era. This suggests that the team generated higher quality scoring opportunities, likely due to improved shot selection from LeBron James creating better opportunities.
+
+### Shift Toward Three Point Shooting
+
+The Post-LeBron era reflects a stronger emphasis on three point shooting. The team’s three point attempt rate increased from 28.0% to 34.1%, indicating a significant shift toward perimeter scoring. This change is consistent with broader league trends and is clearly visible in the increased density of shots beyond the arc in later seasons.
+
+### Decline in Mid Range Attempts
+
+Mid range shots became less prominent in the Lakers offense over time. The proportion of mid range attempts decreased from 13.9% in the Pre-LeBron era to 12.3% in the Post-LeBron era. This reduction shows a move away from lower efficiency shots in favor of more analytically favorable scoring opportunities.
+
+### Rim and Paint Presence
+
+Shot distribution near the rim remained a key component of the offense in both eras, accounting for approximately 42–43% of total attempts. While this proportion stayed relatively stable, the combination of consistent rim pressure and increased three point shooting contributed to a more efficient overall shot profile.
+
+### Increased Shot Distance and Floor Spacing
+
+The average shot distance increased from 12.5 feet in the Pre-LeBron era to 13.2 feet in the Post-LeBron era. This reflects improved floor spacing and a greater reliance on perimeter shooting, allowing the offense to stretch defenses more effectively.
+
+### Visual Evidence from Shot Charts
+
+The shot charts reinforce these statistical findings. Pre-LeBron seasons display a more evenly distributed shot pattern, including mid range attempts, while Post-LeBron seasons show a clearer focus of shots at the rim and along the three point arc, highlighting the team’s transition to a modern offensive approach.
+
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+
+# =================================
+# Extra Visual - Efficiency Heatmap
+# =================================
+
+# Uses stat_summary_2d to aggregate FG% by court location
+# Shot efficiency rather than volume
+
+efficiency_plot <- ggplot(lakers_shots, aes(x = LOC_X, y = LOC_Y)) +
+
+  stat_summary_2d(
+    aes(z = SHOT_MADE_FLAG),
+    bins = 25
+  ) +
+    
+  draw_court() +
+    
+# Binning is most important when creating a heatmap, have to get the right size to clearly show the information. Draw court after stats_summary to see the lines.                      
+# Facet the eras side by side
+
+  facet_wrap(~ era) +
+
+  coord_fixed(xlim = c(-250,250), ylim = c(-50,420)) +
+
+  scale_fill_gradient(
+    low = "#552583",   
+    high = "#FDB927",  
+    name = "FG%"
+  ) +
+
+  # Clean up plot
+  theme_minimal(base_size = 16) +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+
+    
+    plot.title = element_text(size = 22, face = "bold"),
+    plot.subtitle = element_text(size = 16),
+    legend.title = element_text(size = 14),
+    legend.text = element_text(size = 12)
+  ) +
+
+  labs(
+    title = "Lakers Shot Efficiency by Location",
+    subtitle = "Pre-LeBron vs Post-LeBron",
+    fill = "FG%"
+  )
+
+# Print and save plot
+print(efficiency_plot)
+ggsave(
+  filename = "efficiency_plot.png",
+  plot = efficiency_plot,
+  width = 16,
+  height = 12
+)
+```
+
+This heatmap shows the Lakers shooting efficiency across different areas of the court before and after the arrival of LeBron James. In both eras, the highest efficiency (lighter gold areas) is concentrated near the rim, reflecting the high percentage nature of close range shots. However, in the Post-LeBron era, efficient shooting appears slightly more spread out along the three point arc and in the paint, suggesting improved spacing and shot selection. The Pre-LeBron era displays more uniform but slightly lower efficiency across the floor, while the Post-LeBron chart highlights a more optimized offensive distribution consistent with modern “rim-and-three” strategies.
